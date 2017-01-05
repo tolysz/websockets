@@ -17,7 +17,7 @@ module Network.WebSockets.Hybi13
 --------------------------------------------------------------------------------
 import qualified Blaze.ByteString.Builder              as B
 import           Control.Applicative                   (pure, (<$>))
-import           Control.Exception                     (throw)
+import           Control.Exception                     (throw, throwIO)
 import           Control.Monad                         (liftM, forM)
 import qualified Data.Attoparsec.ByteString            as A
 import           Data.Binary.Get                       (getWord16be,
@@ -153,7 +153,7 @@ decodeMessages
     :: Stream
     -> IO (IO (Maybe Message))
 decodeMessages stream = do
-    dmRef <- newMVar emptyDemultiplexState
+    dmRef <- newIORef emptyDemultiplexState
     return $ go dmRef
   where
     go dmRef = do
@@ -161,11 +161,12 @@ decodeMessages stream = do
         case mbFrame of
             Nothing    -> return Nothing
             Just frame -> do
-                mbMsg <- modifyMVarMasked dmRef $
-                    \s -> return . swap $ demultiplex s frame
+                mbMsg <- atomicModifyIORef dmRef $
+                    \s -> swap $ demultiplex s frame
                 case mbMsg of
-                    Nothing  -> go dmRef
-                    Just msg -> return (Just msg)
+                    Left x -> throwIO x
+                    Right Nothing  -> go dmRef
+                    Right (Just msg) -> return (Just msg)
 
 
 --------------------------------------------------------------------------------

@@ -16,7 +16,7 @@ import           Data.Monoid
 import           Data.Either
 import           Control.Applicative ((<|>), (<$>), (*>), (<*))
 import           Control.Concurrent.MVar
-import           Control.Monad (when, foldM)
+import           Control.Monad (when, foldM, liftM2)
 import           Data.Streaming.Zlib
 import qualified Data.Attoparsec.ByteString       as  A hiding (Parser)
 import qualified Data.Attoparsec.ByteString.Char8 as  A
@@ -101,15 +101,15 @@ wsDeflate (Just pmd) = do
 
 feedDeflateLazy :: Deflate -> BSL.ByteString -> IO BSL.ByteString
 feedDeflateLazy worker x = do
-  dec <- foldM (\acc y -> (acc <>) <$> (dePopper =<< feedDeflate worker y)) BSL.empty (BSL.toChunks x)
+  dec <- BSL.foldlChunks (\acc y -> liftM2 (<>) acc (dePopper =<< feedDeflate worker y)) (return BSL.empty) x
   d1 <- dePopper $ flushDeflate worker
-  return $ maybeStrip $ dec <> d1
+  return $ BSL.copy $ maybeStrip $ dec <> d1
 
 feedInflateLazy :: Inflate -> BSL.ByteString -> IO BSL.ByteString
 feedInflateLazy worker x = do
-  dec <- foldM (\acc y -> (acc <>) <$> (dePopper =<< feedInflate worker y)) BSL.empty (BSL.toChunks x)
+  dec <- BSL.foldlChunks (\acc y -> liftM2 (<>) acc (dePopper =<< feedInflate worker y)) (return BSL.empty) x
   d1 <- flushInflate worker
-  return $ dec <> (BSL.fromStrict d1)
+  return $ BSL.copy $ dec <> BSL.fromStrict d1
 
 dePopper :: IO PopperRes -> IO BSL.ByteString
 dePopper p = p >>= \case

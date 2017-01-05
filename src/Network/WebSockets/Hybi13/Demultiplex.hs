@@ -13,7 +13,7 @@ module Network.WebSockets.Hybi13.Demultiplex
 --------------------------------------------------------------------------------
 import           Blaze.ByteString.Builder (Builder)
 import qualified Blaze.ByteString.Builder as B
-import           Control.Exception        (Exception, throw)
+import           Control.Exception        (Exception, SomeException, throw)
 import           Data.Binary.Get          (runGet, getWord16be)
 import qualified Data.ByteString.Lazy     as BL
 import           Data.Monoid              (mappend)
@@ -72,13 +72,13 @@ emptyDemultiplexState = EmptyDemultiplexState
 --------------------------------------------------------------------------------
 demultiplex :: DemultiplexState
             -> Frame
-            -> (Maybe Message, DemultiplexState)
+            -> (Either ConnectionException (Maybe Message), DemultiplexState)
 demultiplex state (Frame True False False False PingFrame pl)
-   | BL.length pl > 125 = throw $ CloseRequest 1002 "Protocol Error"
-   | otherwise = (Just (ControlMessage (Ping pl)), state)
-demultiplex state (Frame True False False False PongFrame pl) = (Just (ControlMessage (Pong pl)), state)
+   | BL.length pl > 125 = (Left $ CloseRequest 1002 "Protocol Error", emptyDemultiplexState)
+   | otherwise = (Right $ Just (ControlMessage (Ping pl)), state)
+demultiplex state (Frame True False False False PongFrame pl) = (Right $ Just (ControlMessage (Pong pl)), state)
 demultiplex _     (Frame True False False False CloseFrame pl)
-      = (Just (ControlMessage (uncurry Close parsedClose)), EmptyDemultiplexState)
+      = (Right $ Just (ControlMessage (uncurry Close parsedClose)), emptyDemultiplexState)
   where
       -- The Close frame MAY contain a body (the "Application data" portion of the
       -- frame) that indicates a reason for closing, such as an endpoint shutting
@@ -99,23 +99,23 @@ demultiplex _     (Frame True False False False CloseFrame pl)
 
 demultiplex EmptyDemultiplexState (Frame fin rsv1 rsv2 rsv3 tp pl) = case tp of
     TextFrame
-        | fin       -> (Just (DataMessage rsv1 rsv2 rsv3 (Text pl)), e)
-        | otherwise -> (Nothing, DemultiplexState (DataMessage rsv1 rsv2 rsv3 . Text . B.toLazyByteString) plb)
+        | fin       -> (Right $ Just (DataMessage rsv1 rsv2 rsv3 (Text pl)), e)
+        | otherwise -> (Right Nothing, DemultiplexState (DataMessage rsv1 rsv2 rsv3 . Text . B.toLazyByteString) plb)
     BinaryFrame
-        | fin       -> (Just (DataMessage rsv1 rsv2 rsv3 (Binary pl)), e)
-        | otherwise -> (Nothing, DemultiplexState (DataMessage rsv1 rsv2 rsv3 . Binary . B.toLazyByteString) plb)
-    _ -> throw DemultiplexException
+        | fin       -> (Right $ Just (DataMessage rsv1 rsv2 rsv3 (Binary pl)), e)
+        | otherwise -> (Right Nothing, DemultiplexState (DataMessage rsv1 rsv2 rsv3 . Binary . B.toLazyByteString) plb)
+    _ -> (Left $ CloseRequest 1002 "Protocol Error", emptyDemultiplexState)
   where
       e   = EmptyDemultiplexState
       plb = B.fromLazyByteString pl
 
 demultiplex (DemultiplexState f b) (Frame fin False False False ContinuationFrame pl)
-  | fin       = (Just (f b'), e)
-  | otherwise = (Nothing, DemultiplexState f b')
+  | fin       = (Right $ Just (f b'), e)
+  | otherwise = (Right Nothing, DemultiplexState f b')
 
  where
    b' = b `mappend` plb
    e   = EmptyDemultiplexState
    plb = B.fromLazyByteString pl
 
-demultiplex _ _ = throw DemultiplexException
+demultiplex _ _ = (Left $ CloseRequest 1002 "Protocol Error", emptyDemultiplexState)
