@@ -89,7 +89,10 @@ demultiplex _     (Frame True False False False CloseFrame pl)
       -- status code with value /code/ defined in Section 7.4.
     parsedClose
        | BL.length pl >= 2 = case runGet getWord16be pl of
-              a | a < 1000 -> (1002, BL.empty)
+              a | a < 1000 || a `elem` [1004,1005,1006
+                                       ,1014,1015,1016
+                                       ,1100,2000,2999
+                                       ,5000,65535] -> (1002, BL.empty)
               a -> (a, BL.drop 2 pl)
        | BL.length pl == 1 = (1002, BL.empty)
        | otherwise         = (1000, BL.empty)
@@ -107,8 +110,8 @@ demultiplex EmptyDemultiplexState (Frame fin rsv1 rsv2 rsv3 tp pl) = case tp of
       plb = B.fromLazyByteString pl
 
 demultiplex (DemultiplexState f b) (Frame fin False False False ContinuationFrame pl)
-  | not fin   = (Nothing, DemultiplexState f b')
-  | otherwise = (Just (f b'), e)
+  | fin       = (Just (f b'), e)
+  | otherwise = (Nothing, DemultiplexState f b')
 
  where
    b' = b `mappend` plb

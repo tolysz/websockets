@@ -17,7 +17,7 @@ pip install autobahntestsuite
 source pyt/bin/activate
 mkdir -p test && cd test
 wstest -m fuzzingclient
-
+websockets-autobahn
 -}
 
 --------------------------------------------------------------------------------

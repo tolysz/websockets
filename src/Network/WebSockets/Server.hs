@@ -14,12 +14,13 @@ module Network.WebSockets.Server
 
 
 --------------------------------------------------------------------------------
-import           Control.Concurrent            (forkIOWithUnmask)
+import           Control.Concurrent            (forkIOWithUnmask, forkIO, killThread, takeMVar, putMVar, newEmptyMVar)
 import           Control.Exception             (allowInterrupt, bracket,
                                                 bracketOnError, finally, mask_,
                                                 throwIO)
 import           Control.Monad                 (forever, void)
 import           Network.Socket                (Socket)
+import qualified System.Mem                    as Mem
 import qualified Network.Socket                as S
 
 
@@ -64,11 +65,13 @@ runServerWith host port opts app = S.withSocketsDo $
     mask_ $ forever $ do
       allowInterrupt
       (conn, _) <- S.accept sock
-      void $ forkIOWithUnmask $ \unmask ->
-        finally (unmask $ runApp conn opts app) (S.close conn)
+      var <- newEmptyMVar
+      fid <- forkIOWithUnmask $ \unmask ->
+        finally (unmask $ runApp conn opts app) (putMVar var ())
+      forkIO $ takeMVar var
+                >> killThread fid
+                >> S.close conn
     )
-
-
 
 --------------------------------------------------------------------------------
 -- | Create a standardized socket on which you can listen for incomming
