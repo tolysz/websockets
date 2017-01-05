@@ -2,6 +2,7 @@
            , LambdaCase
            , RecordWildCards
            , BangPatterns
+           , TupleSections
            #-}
 module Network.WebSockets.Extensions.PermessageDeflate where
 
@@ -21,7 +22,7 @@ import           Data.Streaming.Zlib
 import qualified Data.Attoparsec.ByteString       as  A hiding (Parser)
 import qualified Data.Attoparsec.ByteString.Char8 as  A
 import qualified Data.CaseInsensitive             as CI
-import           Control.Exception  (throwIO)
+import           Control.Exception.Safe  (throwIO)
 {-
    Four extension parameters are defined for "permessage-deflate" to
    help endpoints manage per-connection resource usage.
@@ -84,16 +85,16 @@ rejectExtensions a = return a
 {-# NOINLINE wsDeflate #-}
 wsDeflate :: Maybe PermessageDeflate -> IO (Message -> IO Message)
 wsDeflate Nothing = return rejectExtensions
-wsDeflate (Just pmd) = do
-    dmRef <- newMVar =<< fresh
-    return $ wsDeflate1 dmRef
+wsDeflate (Just pmd) =
+    wsDeflate1 <$> (newMVar =<< fresh)
   where
     fresh = wsCompress pmd
-    compressor dmRef x =  do
-          worker <- takeMVar dmRef
-          ret <- feedDeflateLazy worker x
-          putMVar dmRef =<< if serverNoContextTakeover pmd then fresh else return worker
-          return ret
+    compressor dmRef x =
+      modifyMVar dmRef $ \worker -> do
+        ret <- feedDeflateLazy worker x
+        if serverNoContextTakeover pmd
+          then (, ret) <$> fresh
+          else return (worker, ret)
 
     wsDeflate1 dmRef (DataMessage False False False (Text x))   = DataMessage True False False . Text <$> compressor dmRef x
     wsDeflate1 dmRef (DataMessage False False False (Binary x)) = DataMessage True False False . Binary <$> compressor dmRef x
@@ -103,13 +104,13 @@ feedDeflateLazy :: Deflate -> BSL.ByteString -> IO BSL.ByteString
 feedDeflateLazy worker x = do
   dec <- BSL.foldlChunks (\acc y -> liftM2 (<>) acc (dePopper =<< feedDeflate worker y)) (return BSL.empty) x
   d1 <- dePopper $ flushDeflate worker
-  return $ BSL.copy $ maybeStrip $ dec <> d1
+  return $ maybeStrip $ dec <> d1
 
 feedInflateLazy :: Inflate -> BSL.ByteString -> IO BSL.ByteString
 feedInflateLazy worker x = do
   dec <- BSL.foldlChunks (\acc y -> liftM2 (<>) acc (dePopper =<< feedInflate worker y)) (return BSL.empty) x
   d1 <- flushInflate worker
-  return $ BSL.copy $ dec <> BSL.fromStrict d1
+  return $ dec <> BSL.fromStrict d1
 
 dePopper :: IO PopperRes -> IO BSL.ByteString
 dePopper p = p >>= \case
@@ -121,16 +122,17 @@ dePopper p = p >>= \case
 {-# NOINLINE wsInflate #-}
 wsInflate :: Maybe PermessageDeflate -> IO (Message -> IO Message)
 wsInflate Nothing = return rejectExtensions
-wsInflate (Just pmd) = do
-    dmRef <- newMVar =<< fresh
-    return $ wsInflate1 dmRef
+wsInflate (Just pmd) = 
+    wsInflate1 <$> (newMVar =<< fresh)
   where
     fresh = wsDecompress pmd
-    compressor dmRef x =  do
-          worker <- takeMVar dmRef
-          ret <- feedInflateLazy worker (x <> appTailL)
-          putMVar dmRef =<< if clientNoContextTakeover pmd then fresh else return worker
-          return ret
+    compressor dmRef x =
+      modifyMVar dmRef $ \worker -> do
+        ret <- feedInflateLazy worker x
+        if clientNoContextTakeover pmd
+          then (, ret) <$> fresh
+          else return (worker, ret)
+
     wsInflate1 dmRef (DataMessage True a b  (Text x)) = DataMessage False a b . Text   <$> compressor dmRef x
     wsInflate1 dmRef (DataMessage True a b (Binary x)) = DataMessage False a b . Binary <$> compressor dmRef x
     wsInflate1 _ x = return x

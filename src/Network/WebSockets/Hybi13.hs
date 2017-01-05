@@ -1,6 +1,7 @@
 --------------------------------------------------------------------------------
 {-# LANGUAGE BangPatterns      #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ViewPatterns #-}
 module Network.WebSockets.Hybi13
     ( headerVersions
     , finishRequest
@@ -17,7 +18,7 @@ module Network.WebSockets.Hybi13
 --------------------------------------------------------------------------------
 import qualified Blaze.ByteString.Builder              as B
 import           Control.Applicative                   (pure, (<$>))
-import           Control.Exception                     (throw, throwIO)
+import           Control.Exception.Safe                     (throw, throwIO)
 import           Control.Monad                         (liftM, forM)
 import qualified Data.Attoparsec.ByteString            as A
 import           Data.Binary.Get                       (getWord16be,
@@ -32,6 +33,7 @@ import qualified Data.ByteString.Lazy                  as BL
 import           Data.Digest.Pure.SHA                  (bytestringDigest, sha1)
 import           Data.Int                              (Int64)
 import           Data.IORef
+import           Data.Either
 import           Control.Concurrent.MVar
 import           Data.Monoid                           (mappend, mconcat,
                                                         mempty)
@@ -57,18 +59,18 @@ headerVersions = ["13"]
 --------------------------------------------------------------------------------
 finishRequest :: RequestHead
               -> Headers
-              -> Response
+              -> Either HandshakeException Response
 finishRequest reqHttp headers =
     let !key     = getRequestHeader reqHttp "Sec-WebSocket-Key"
-        !hash    = hashKey key
-        !encoded = B64.encode hash
-    in response101 (("Sec-WebSocket-Accept", encoded):headers) ""
+        !hash    = hashKey <$> key
+        !encoded = B64.encode <$> hash
+    in (\x -> response101 (("Sec-WebSocket-Accept", x):headers) "") <$> encoded
 
 
 --------------------------------------------------------------------------------
 finishResponse :: RequestHead
                -> ResponseHead
-               -> Response
+               -> Either HandshakeException Response
 finishResponse request response
     -- Response message should be one of
     --
@@ -76,16 +78,17 @@ finishResponse request response
     -- - Switching Protocols
     --
     -- But we don't check it for now
-    | responseCode response /= 101  = throw $ MalformedResponse response
+    | responseCode response /= 101  = Left $ MalformedResponse response
         "Wrong response status or message."
-    | responseHash /= challengeHash = throw $ MalformedResponse response
+    | isLeft responseHash = let Left x = responseHash in Left x
+    | responseHash /= challengeHash = Left $ MalformedResponse response
         "Challenge and response hashes do not match."
     | otherwise                     =
-        Response response ""
+        Right $ Response response ""
   where
     key           = getRequestHeader  request  "Sec-WebSocket-Key"
     responseHash  = getResponseHeader response "Sec-WebSocket-Accept"
-    challengeHash = B64.encode $ hashKey key
+    challengeHash = B64.encode . hashKey <$> key
 
 
 --------------------------------------------------------------------------------

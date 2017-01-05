@@ -13,7 +13,7 @@ module Network.WebSockets.Stream
 
 import           Control.Concurrent.MVar        (MVar, newEmptyMVar, newMVar,
                                                  putMVar, takeMVar, withMVar)
-import           Control.Exception              (onException, throwIO)
+import           Control.Exception.Safe        (onException, throwIO)
 import           Control.Monad                  (forM_, when)
 import qualified Data.Attoparsec.ByteString     as Atto
 import qualified Data.ByteString                as B
@@ -81,7 +81,7 @@ makeStream receive send = do
     assertNotClosed ref io = do
         state <- readIORef ref
         case state of
-            Closed _ -> throwIO ConnectionClosed
+            Closed _ -> cleanBuffer ref >> throwIO ConnectionClosed
             Open   _ -> io
 
     receive' :: IORef StreamState -> MVar () -> IO (Maybe B.ByteString)

@@ -23,7 +23,7 @@ websockets-autobahn
 --------------------------------------------------------------------------------
 import           Control.Monad              (forever)
 import           Control.Monad.Trans        (liftIO)
-import           Control.Exception          (catch)
+import           Control.Exception.Safe          (catch)
 import           Data.ByteString.Lazy.Char8 ()
 
 
@@ -45,15 +45,16 @@ application pc = do
 --     liftIO $ putStrLn $ "Requested client version: " ++ show version'
 --     liftIO $ putStrLn $ "Requested subprotocols: " ++ show (WS.getRequestSubprotocols rq)
 --     liftIO $ putStrLn $ "Requested SecWebSocketExtensions: " ++ show (WS.getRequestSecWebSocketExtensions rq)
-    echoDataMessage conn `catch` handleClose >> (liftIO $ putStrLn $ "Finished")
+    echoDataMessage conn `catch` handleClose
+--     >> (liftIO $ putStrLn $ "Finished")
 
   where
     rq       = WS.pendingRequest pc
     version' = lookup "Sec-WebSocket-Version" (WS.requestHeaders rq)
     handleClose (WS.CloseRequest i msg) =
         putStrLn $ "Recevied close request " ++ show i ++ " : " ++ show msg
-    handleClose WS.ConnectionClosed =
-        putStrLn "Unexpected connection closed exception"
+    handleClose WS.ConnectionClosed = return ()
+--         putStrLn "Unexpected connection closed exception"
     handleClose (WS.ParseException e) =
         putStrLn $ "Recevied parse exception: " ++ show e
 

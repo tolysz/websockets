@@ -15,7 +15,8 @@ module Network.WebSockets.Server
 
 --------------------------------------------------------------------------------
 import           Control.Concurrent            (forkIOWithUnmask, forkIO, killThread, takeMVar, putMVar, newEmptyMVar)
-import           Control.Exception             (allowInterrupt, bracket,
+import           Control.Exception             (allowInterrupt)
+import           Control.Exception.Safe             (bracket,
                                                 bracketOnError, finally, mask_,
                                                 throwIO)
 import           Control.Monad                 (forever, void)
@@ -63,14 +64,10 @@ runServerWith host port opts app = S.withSocketsDo $
   S.close
   (\sock ->
     mask_ $ forever $ do
-      allowInterrupt
+--       allowInterrupt
       (conn, _) <- S.accept sock
-      var <- newEmptyMVar
-      fid <- forkIOWithUnmask $ \unmask ->
-        finally (unmask $ runApp conn opts app) (putMVar var ())
-      forkIO $ takeMVar var
-                >> killThread fid
-                >> S.close conn
+      forkIOWithUnmask $ \unmask ->
+        finally (unmask $ runApp conn opts app) (S.close conn)
     )
 
 --------------------------------------------------------------------------------
