@@ -32,6 +32,7 @@ import qualified Data.ByteString.Lazy                  as BL
 import           Data.Digest.Pure.SHA                  (bytestringDigest, sha1)
 import           Data.Int                              (Int64)
 import           Data.IORef
+import           Control.Concurrent.MVar
 import           Data.Monoid                           (mappend, mconcat,
                                                         mempty)
 import           Data.Tuple                            (swap)
@@ -113,7 +114,7 @@ encodeMessages conType stream = do
     genRef <- newIORef =<< newStdGen
     return $ \msgs -> do
         builders <- forM msgs $ \msg ->
-          atomicModifyIORef genRef $ \s -> encodeMessage conType s msg
+          atomicModifyIORef' genRef $ \s -> encodeMessage conType s msg
         Stream.write stream (B.toLazyByteString $ mconcat builders)
 
 --------------------------------------------------------------------------------
@@ -152,7 +153,7 @@ decodeMessages
     :: Stream
     -> IO (IO (Maybe Message))
 decodeMessages stream = do
-    dmRef <- newIORef emptyDemultiplexState
+    dmRef <- newMVar emptyDemultiplexState
     return $ go dmRef
   where
     go dmRef = do
@@ -160,8 +161,8 @@ decodeMessages stream = do
         case mbFrame of
             Nothing    -> return Nothing
             Just frame -> do
-                mbMsg <- atomicModifyIORef' dmRef $
-                    \s -> swap $ demultiplex s frame
+                mbMsg <- modifyMVarMasked dmRef $
+                    \s -> return . swap $ demultiplex s frame
                 case mbMsg of
                     Nothing  -> go dmRef
                     Just msg -> return (Just msg)
